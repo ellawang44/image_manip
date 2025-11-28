@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import functools
+import itertools
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Iterator, Literal, Optional, TypeVar
 
 # Fallback for Protocol import
 try:
@@ -38,6 +39,8 @@ class QuantizedColourImage:
     centers: NDArray[np.float32]
 
 
+PixelFormat = Literal["single", "cycle"]
+
 ###############################################################################
 ### Protocols #################################################################
 ###############################################################################
@@ -71,7 +74,7 @@ def html_str_template(x: NDArray[np.str_], font_size: int = 14) -> np.str_:
     <!DOCTYPE html>
     <html>
     <body>
-        <pre style="font-family: monospace; font-size: {font_size}px; line-height: 1ch;">{str_vals}</pre>
+        <pre style="font-size: {font_size}px; line-height: 1ch;">{str_vals}</pre>
     </body>
     </html>
     """
@@ -202,17 +205,15 @@ def quantized_to_formatted_output(
     formatted_str : str
         The image converted to formatted string representation.
     """
-    # Create format array
-    format_array = np.array(
-        [
-            pixel_formater(i, quantized_image.centers)
-            for i in range(len(quantized_image.centers))
-        ]
-    )
-
-    # Map format array to image data
-    formatted_array = format_array[quantized_image.image_data]
-    return image_template(formatted_array)
+    pixel_output = []
+    for row in quantized_image.image_data:
+        output_row = []
+        for v in row:
+            pixel = pixel_formater(v, quantized_image.centers)
+            output_row.append(pixel)
+        pixel_output.append(output_row)
+    pixel_output = np.array(pixel_output)
+    return image_template(pixel_output)
 
 
 def quantized_to_ascii_str(
@@ -340,9 +341,41 @@ def quantized_to_cartoon_file(
     Image.fromarray(out_img).save(path_to_output)
 
 
+def _pixel_generator(
+    pixel_chars: str,
+    pixel_format: PixelFormat,
+) -> Iterator[str]:
+    """Generate pixel characters based on format.
+
+    Parameters
+    ----------
+    pixel_chars : str
+        Character(s) for pixel art.
+    pixel_format : PixelFormat
+        Pixel format to use.
+
+    Returns
+    -------
+    pixel_gen : Iterator[str]
+        Iterator for pixel characters.
+    """
+    if pixel_format == "single":
+        if len(pixel_chars) != 1:
+            raise ValueError("pixel_char is invalid, must be str of len 1.")
+
+        pixel_gen = itertools.repeat(pixel_chars)
+    elif pixel_format == "cycle":
+        pixel_gen = itertools.cycle(pixel_chars)
+    else:
+        raise ValueError("pixel_format is invalid.")
+
+    return pixel_gen
+
+
 def quantized_to_pixelart_str(
     quantized_image: QuantizedColourImage,
-    pixel_char: str = "█",
+    pixel_chars: str = "█",
+    pixel_format: PixelFormat = "single",
 ) -> np.str_:
     """Convert quantized image to pixel art.
 
@@ -350,19 +383,20 @@ def quantized_to_pixelart_str(
     ----------
     quantized_image : QuantizedColourImage
         The quantized colour image.
-    pixel_char: str
-        Character for pixel art.
+    pixel_chars: str
+        Character(s) for pixel art.
+    pixel_format : PixelFormat
+        Pixel format to use.
 
     Returns
     -------
     pixel_art_image : NDArray[np.uint8]
         The pixel art image.
     """
-
-    if len(pixel_char) != 1:
-        raise ValueError("pixel_char is invalid, must be str of len 1.")
+    pixel_gen = _pixel_generator(pixel_chars, pixel_format)
 
     def pixel_char_formater(i: int, centers: np.ndarray) -> np.str_:
+        pixel_char = next(pixel_gen)
         r, g, b = centers[i].astype(int)
         return np.str_(f"\033[38;2;{r};{g};{b}m{pixel_char}\033[0m")
 
@@ -376,7 +410,8 @@ def quantized_to_pixelart_str(
 def quantized_to_pixelart_html(
     quantized_image: QuantizedColourImage,
     path_to_html: str,
-    pixel_char: str = "█",
+    pixel_chars: str = "█",
+    pixel_format: PixelFormat = "single",
     font_size: int = 14,
 ) -> None:
     """Convert quantized image to pixel art.
@@ -387,19 +422,22 @@ def quantized_to_pixelart_html(
         The quantized colour image.
     path_to_html : str
         Path to output html file.
-    pixel_char: str
-        Character for pixel art.
+    pixel_chars: str
+        Character(s) for pixel art.
+    pixel_format : PixelFormat
+        Pixel format to use.
     font_size : int
         Font size to use in html file.
     """
-
-    if len(pixel_char) != 1:
-        raise ValueError("pixel_char is invalid, must be str of len 1.")
+    pixel_gen = _pixel_generator(pixel_chars, pixel_format)
 
     def pixel_char_formater(i: int, centers: np.ndarray) -> np.str_:
+        pixel_char = next(pixel_gen)
         r, g, b = centers[i].astype(int)
         hex_str = f"#{r:02x}{g:02x}{b:02x}"
-        return np.str_(f'<span style="background-color: {hex_str}; color:{hex_str}">{pixel_char}</span>')
+        return np.str_(
+            f'<span style="background-color: {hex_str}; color:{hex_str}">{pixel_char}</span>'
+        )
 
     html_template = functools.partial(html_str_template, font_size=font_size)
     pixel_output = quantized_to_formatted_output(
@@ -407,58 +445,6 @@ def quantized_to_pixelart_html(
         image_template=html_template,
         pixel_formater=pixel_char_formater,
     )
-
-    # Export to html file
-    if not path_to_html.endswith(".html"):
-        path_to_html += ".html"
-
-    with open(path_to_html, "w") as f:
-        f.write(pixel_output)
-
-
-
-def quantized_to_pixelcycleart_html(
-    quantized_image: QuantizedColourImage,
-    path_to_html: str,
-    pixel_char: str = "█",
-    font_size: int = 14,
-) -> None:
-    """Convert quantized image to pixel art.
-
-    Parameters
-    ----------
-    quantized_image : QuantizedColourImage
-        The quantized colour image.
-    path_to_html : str
-        Path to output html file.
-    pixel_char: str
-        Character for pixel art.
-    font_size : int
-        Font size to use in html file.
-    """
-
-    if len(pixel_char) != 1:
-        raise ValueError("pixel_char is invalid, must be str of len 1.")
-
-    import itertools
-    pixel_chars = itertools.cycle("FIKA! ")
-    def pixel_char_formater(i: int, centers: np.ndarray) -> np.str_:
-        pixel_char = next(pixel_chars)
-
-        r, g, b = centers[i].astype(int)
-        hex_str = f"#{r:02x}{g:02x}{b:02x}"
-        return np.str_(f'<span style="background-color: {hex_str}; color:{hex_str}">{pixel_char}</span>')
-
-
-    pixel_output = []
-    for row in quantized_image.image_data:
-        output_row = []
-        for v in row:
-            pixel = pixel_char_formater(v, quantized_image.centers)
-            output_row.append(pixel)
-        pixel_output.append(output_row)
-    pixel_output = np.array(pixel_output)
-    pixel_output = html_str_template(pixel_output, font_size=font_size)
 
     # Export to html file
     if not path_to_html.endswith(".html"):
