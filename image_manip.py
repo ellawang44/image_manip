@@ -562,8 +562,11 @@ def quantized_to_compact_pixelart_html(
     quantized_rle_codes = from_image_to_rle(quantized_image)
 
     def code_formater(i: int, count: int, centers: np.ndarray) -> np.str_:
-        pixel_char = next(pixel_gen)
-        block = pixel_char * count
+        block_chars = []
+        for _ in range(count):
+            block_chars.append(next(pixel_gen))
+
+        block = "".join(block_chars)
 
         r, g, b = centers[i].astype(int)
         hex_str = f"#{r:02x}{g:02x}{b:02x}"
